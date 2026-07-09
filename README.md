@@ -1,4 +1,4 @@
-# Two-Wheeled BipedalSelf-Balancing Robot
+# Two-Wheeled Bipedal Self-Balancing Robot
 
 **Algorithmic Tutorial — Design, Modeling, and Control**
 
