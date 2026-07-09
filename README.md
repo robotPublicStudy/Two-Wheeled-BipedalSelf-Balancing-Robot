@@ -157,7 +157,7 @@ The learning rate $\eta$ is adapted by a simplified Armijo backtracking line sea
 
 - Start with $\eta_{\text{try}} = \min(2\eta_{\text{prev}},\, \eta_{\max})$, where $\eta_{\max} = 1.0$.
 - While $\eta_{\text{try}} > 10^{-14}$:
-  - Compute the trial point $\boldsymbol{l}_{\text{try}} = \operatorname{Proj}(\boldsymbol{l} - \eta_{\text{try}}\nabla J)$.
+  - Compute the trial point $\boldsymbol{l}_{\text{try}} = \mathrm{Proj}(\boldsymbol{l} - \eta_{\text{try}}\nabla J)$.
   - If $J(\boldsymbol{l}_{\text{try}}) < J_{\text{curr}}$, accept and set $\eta = \eta_{\text{try}}$.
   - Otherwise, halve $\eta_{\text{try}} \leftarrow \eta_{\text{try}} / 2$.
 
@@ -167,38 +167,82 @@ Convergence is declared when $\|\nabla J\| < 10^{-10}$ or when the cost improvem
 
 ```text
 Algorithm 1: Link-Length Optimisation
-Input : l0 (initial guess), θ1_min, θ1_max (operating range)
+Input : l0, θ1_min, θ1_max, δ, l_min, l_max
 Output: l* (optimised link lengths)
 
  1  l ← l0
- 2  Θ ← { α5_def + θ1 | θ1 ∈ [θ1_min, θ1_max], step 1° }
- 3  J_curr ← Cost(l, Θ)                        # using the variance cost J
+ 2  Θ ← { α5_def + θ1 | θ1 = θ1_min, θ1_min + 1°, ..., θ1_max }
+ 3  J_curr ← Cost(l, Θ)
  4  η ← 0.01
- 5  for k = 1 to 3000 do
- 6      for j = 1 to 5 do                      # central-difference gradient
- 7          g_j ← ( Cost(l + δ·e_j, Θ) − Cost(l − δ·e_j, Θ) ) / (2δ)
- 8      if ‖g‖ < 1e−10 then break
- 9      η ← LineSearch(l, g, J_curr, η, Θ)
-10      if line search failed then break
-11  return l* ← l
+
+ 5  for k ← 1 to 3000 do
+ 6      for j ← 1 to 5 do
+ 7          e_j ← j-th unit vector
+ 8          J_plus  ← Cost(l + δ·e_j, Θ)
+ 9          J_minus ← Cost(l − δ·e_j, Θ)
+10          g_j ← (J_plus − J_minus) / (2δ)
+11      end for
+
+12      if ‖g‖₂ < 1e−10 then
+13          break
+14      end if
+
+15      l_new, J_new, η, success ← LineSearch(l, g, J_curr, η, Θ)
+16      if not success then
+17          break
+18      end if
+
+19      if |J_curr − J_new| < 1e−13 · max(1, J_curr) then
+20          l ← l_new
+21          J_curr ← J_new
+22          break
+23      end if
+
+24      l ← l_new
+25      J_curr ← J_new
+26  end for
+
+27  return l* ← l
+
 
 function Cost(l, Θ):
- 1  m ← |Θ|;   x ← 0_m
- 2  for i = 1 to m do
- 3      run forward kinematics with α5 = Θ[i], link lengths l
- 4      if four-bar assembly infeasible then return 1e3
- 5      x[i] ← G_px                            # horizontal foot coordinate
- 6  return (1 / 2m) · Σ_i ( x[i] − mean(x) )²
+Input : l, Θ
+Output: J
+
+ 1  m ← |Θ|
+ 2  x ← zero vector of length m
+
+ 3  for i ← 1 to m do
+ 4      G_p, feasible ← ForwardKinematics(Θ[i], l)
+ 5      if not feasible then
+ 6          return 1e3
+ 7      end if
+ 8      x[i] ← G_p,x
+ 9  end for
+
+10  x_mean ← mean(x)
+11  J ← (1 / (2m)) · Σ_i (x[i] − x_mean)²
+12  return J
+
 
 function LineSearch(l, g, J_curr, η, Θ):
- 1  η_t ← min(2η, 1.0)
- 2  while η_t > 1e−14 do
- 3      l_t ← Proj_[0.03, 0.30]( l − η_t·g )
- 4      J_t ← Cost(l_t, Θ)
- 5      if J_t < J_curr then
- 6          l ← l_t;   return η_t
- 7      η_t ← η_t / 2
- 8  return failed
+Input : l, g, J_curr, η, Θ
+Output: l_new, J_new, η_new, success
+
+ 1  η_try ← min(2η, 1.0)
+
+ 2  while η_try > 1e−14 do
+ 3      l_try ← clip(l − η_try·g, l_min, l_max)
+ 4      J_try ← Cost(l_try, Θ)
+
+ 5      if J_try < J_curr then
+ 6          return l_try, J_try, η_try, true
+ 7      end if
+
+ 8      η_try ← η_try / 2
+ 9  end while
+
+10  return l, J_curr, η, false
 ```
 
 ### 2.6 Results on the prototype
@@ -281,34 +325,53 @@ $$
 
 ```text
 Algorithm 2: Forward Kinematics — Single Leg
-Input : θ1 (crank offset, rad), α5_def, α11, link lengths l1..l5
-Output: G_p (foot position), α3, α12
+Input : θ1, α5_def, α11, link lengths l1, l2, l3, l4, l5
+Output: G_p, α3, α12, feasible
 
- 1  α5 ← α5_def + |θ1|                          # absolute crank angle
+ 1  α5 ← α5_def + |θ1|
  2  α9 ← α5 − α11
- 3  // Diagonal of triangle ABE
- 4  l8² ← l1² + l5² − 2·l1·l5·cos(α5 − α11)
- 5  if l8² ≤ 0 then error "infeasible"
- 6  // Circle intersection: B(l1,0) radius l2, E radius l3
- 7  d ← sqrt( (l5·c5 − l1)² + (l5·s5)² )
- 8  if d > l2 + l3 or d < |l2 − l3| then error "no intersection"
- 9  a ← (l2² − l3² + d²) / (2d)
-10  h ← sqrt(l2² − a²)
-11  x_m ← l1 + a·(l5·c5 − l1)/d
-12  y_m ← a·l5·s5 / d
-13  D ← ( x_m − h·l5·s5/d , y_m + h·(l5·c5 − l1)/d )   # second intersection
-14  // Angle α3
-15  ED ← D − (l5·c5, l5·s5)
-16  EA ← (−l5·c5, −l5·s5)
-17  cosφ ← (ED·EA) / (‖ED‖·‖EA‖);   clamp to [−1, 1]
-18  α3 ← arccos(cosφ)
-19  // Wheel-centre position
-20  G_px ← l5·c9 − l4·(sin α3·sin α9 − cos α3·cos α9)
-21  G_py ← l4·(cos α3·sin α9 + cos α9·sin α3) + l5·s9
-22  // Angle α12 (for CoM computation)
-23  α10 ← arccos( (l1² + l2² − l8²) / (2·l1·l2) )
-24  α12 ← π − α10
-25  return G_p, α3, α12
+
+ 3  l8² ← l1² + l5² − 2·l1·l5·cos(α5 − α11)
+ 4  if l8² ≤ 0 then
+ 5      return null, null, null, false
+ 6  end if
+ 7  l8 ← sqrt(l8²)
+
+ 8  B ← (l1, 0)
+ 9  E ← (l5·cos α9, l5·sin α9)
+10  d ← ‖E − B‖
+
+11  if d > l2 + l3 or d < |l2 − l3| then
+12      return null, null, null, false
+13  end if
+
+14  a ← (l2² − l3² + d²) / (2d)
+15  h² ← l2² − a²
+16  if h² < 0 then
+17      return null, null, null, false
+18  end if
+19  h ← sqrt(h²)
+
+20  x_m ← B_x + a·(E_x − B_x)/d
+21  y_m ← B_y + a·(E_y − B_y)/d
+
+22  D ← (x_m − h·(E_y − B_y)/d,
+         y_m + h·(E_x − B_x)/d)      # selected assembly mode
+
+23  ED ← D − E
+24  EA ← −E
+25  cosφ ← (ED · EA) / (‖ED‖·‖EA‖)
+26  cosφ ← clamp(cosφ, −1, 1)
+27  α3 ← arccos(cosφ)
+
+28  G_px ← l5·cos α9 + l4·cos(α3 + α9)
+29  G_py ← l5·sin α9 + l4·sin(α3 + α9)
+30  G_p ← (G_px, G_py)
+
+31  α10 ← arccos( clamp((l1² + l2² − l8²)/(2·l1·l2), −1, 1) )
+32  α12 ← π − α10
+
+33  return G_p, α3, α12, true
 ```
 
 > **Note.** On the prototype the active chain uses a slightly different angular convention than the passive chain. The quantity $\alpha_9 = \alpha_5 - \alpha_{11}$ re-aligns the crank angle to the body-fixed frame. On the physical robot, $\alpha_{11} = 41^\circ$ and $\alpha_8 = 151.45^\circ$ in the code.
@@ -386,28 +449,46 @@ where the sum runs over both legs and the body. The offset angle $\Delta\beta$ i
 
 ```text
 Algorithm 3: Centre of Mass, l_cg, Δβ, and J_cg
-Input : θ1, θ3 (hip crank offsets, rad), α8 (body tilt), system constants
-Output: l_cg, Δβ, J_cg
+Input : θ1, θ3, α8, system constants
+Output: l_cg, Δβ, J_cg, G_pR, G_pL
 
- 1  // For each leg • ∈ {R, L}:
- 2  for • in {R, L} do
- 3      G_p•, α3•, α12• ← ForwardKinematics(θ•)        # Algorithm 2
- 4      α9• ← α5_def + |θ•| − α11
- 5      compute p_m5^(0,•), p_m4^(0,•), p_m2^(0,•)      # using the CoM formulas
- 6  p_mb^(0) ← ( l_AC·cos α8 , l_AC·sin α8 )
- 7  // Mass-weighted sum:
- 8  p_R^(0) ← (1/M)·( m_b·p_mb + Σ_• [ m_l5·p_m5^(0,•) + m_l4·p_m4^(0,•) + m_l2·p_m2^(0,•) ] )
- 9  p_G^(0) ← ½·( G_pR + G_pL )
-10  Δp ← p_R^(0) − p_G^(0)
-11  l_cg ← ‖Δp‖
-12  Δβ ← atan2(Δp_x, Δp_y)
-13  // Moment of inertia (parallel-axis):
-14  J_cg ← [ J_b + m_b·‖p_mb − p_R^(0)‖² ]
-15  for • in {R, L} do
-16      J_cg += J_l5 + m_l5·‖p_m5^(0,•) − p_R^(0)‖²
-17      J_cg += J_l4 + m_l4·‖p_m4^(0,•) − p_R^(0)‖²
-18      J_cg += J_l2 + m_l2·‖p_m2^(0,•) − p_R^(0)‖²
-19  return l_cg, Δβ, J_cg, G_pR, G_pL
+ 1  for each leg • ∈ {R, L} do
+ 2      G_p•, α3•, α12•, feasible ← ForwardKinematics(θ•)
+ 3      if not feasible then
+ 4          return failed
+ 5      end if
+
+ 6      α9• ← α5_def + |θ•| − α11
+
+ 7      p_m5^(0,•) ← CoM position of crank l5
+ 8      p_m4^(0,•) ← CoM position of shank l34
+ 9      p_m2^(0,•) ← CoM position of coupler l2
+10  end for
+
+11  p_mb^(0) ← (l_AC·cos α8, l_AC·sin α8)
+
+12  M ← m_b + 2·(m_l5 + m_l4 + m_l2)
+
+13  p_R^(0) ← (1/M) · [
+        m_b·p_mb^(0)
+        + Σ_• (m_l5·p_m5^(0,•) + m_l4·p_m4^(0,•) + m_l2·p_m2^(0,•))
+    ]
+
+14  p_G^(0) ← 0.5 · (G_pR + G_pL)
+15  Δp ← p_R^(0) − p_G^(0)
+
+16  l_cg ← ‖Δp‖
+17  Δβ ← atan2(Δp_x, Δp_y)
+
+18  J_cg ← J_b + m_b·‖p_mb^(0) − p_R^(0)‖²
+
+19  for each leg • ∈ {R, L} do
+20      J_cg ← J_cg + J_l5 + m_l5·‖p_m5^(0,•) − p_R^(0)‖²
+21      J_cg ← J_cg + J_l4 + m_l4·‖p_m4^(0,•) − p_R^(0)‖²
+22      J_cg ← J_cg + J_l2 + m_l2·‖p_m2^(0,•) − p_R^(0)‖²
+23  end for
+
+24  return l_cg, Δβ, J_cg, G_pR, G_pL
 ```
 
 ---
@@ -578,7 +659,7 @@ $$
 - Forward velocity error $\dot{x} - \dot{x}_d$ and forward position $x - x_d$ receive moderate penalties ($q_{11} = 10$, $q_{22} = 1$).
 - Pitch rate $\dot{\theta}$ is penalised to damp oscillations ($q_{44} = 15$).
 - Yaw and yaw rate receive light penalties ($q_{55} = 2$, $q_{66} = 1$).
-- Control effort is penalised symmetrically on the two wheels ($R_1 = \operatorname{diag}(1.5,\, 1.5)$).
+- Control effort is penalised symmetrically on the two wheels ($R_1 = \mathrm{diag}(1.5,\, 1.5)$).
 
 $$
 Q_1 = \mathrm{diag}(10,\; 1,\; 300,\; 15,\; 2,\; 1), 
@@ -608,20 +689,29 @@ The height error receives the highest penalty ($q_{11} = 5\times10^{4}$), follow
 
 ```text
 Algorithm 4: LQR Gain Computation for One Posture
-Input : θ1, θ3 (hip offsets), system constants, weight matrices Q, R
-Output: K1 (wheel-torque gain) or K2 (body-leveling gain)
+Input : θ1, θ3, system constants, Q, R
+Output: K
 
- 1  // 1. Compute inertial quantities:
- 2  l_cg, Δβ, J_cg, G_pR, G_pL ← ComputeCoM(θ1, θ3)     # Algorithm 3
- 3  // 2. Compute coefficients:
- 4  m_rot ← m_b + 2·(m_l5 + m_l4 + m_l2)
- 5  a1, a2, a3 ← (coefficient eqs);   b1, b2, b3 ← (coefficient eqs)
- 6  // 3. Assemble linearised state-space:
- 7  A, B ← (6×6 A and 6×2 B)
- 8  // 4. Solve CARE and compute gain:
- 9  solve  Aᵀ·P + P·A − P·B·R⁻¹·Bᵀ·P + Q = 0   for  P ≻ 0
-10  K ← R⁻¹·Bᵀ·P
-11  return K
+ 1  l_cg, Δβ, J_cg, G_pR, G_pL ← ComputeCoM(θ1, θ3)
+
+ 2  m_rot ← m_b + 2·(m_l5 + m_l4 + m_l2)
+
+ 3  a1 ← 1 / [r·(2m_w + 2J_w/r² + m_rot)]
+ 4  a2 ← −m_rot·l_cg / (2m_w + 2J_w/r² + m_rot)
+ 5  a3 ← −a2
+
+ 6  b1 ← m_rot·l_cg·g / (J_cg + m_rot·l_cg²)
+ 7  b2 ← −m_rot·l_cg / (J_cg + m_rot·l_cg²)
+ 8  b3 ← −1 / (J_cg + m_rot·l_cg²)
+
+ 9  assemble A and B using a1, a2, a3, b1, b2, b3
+
+10  solve the CARE:
+        AᵀP + PA − PBR⁻¹BᵀP + Q = 0
+
+11  K ← R⁻¹BᵀP
+
+12  return K
 ```
 
 > **Note.** For the body-leveling LQR, steps 2–4 use $(A_h, B_h, Q_2, R_2)$ instead, and step 1 is skipped because $A_h$ and $B_h$ are configuration-independent.
@@ -667,21 +757,32 @@ This replaces an on-line Riccati solve (tens of milliseconds on an embedded proc
 
 ```text
 Algorithm 5: Offline Gain-Scheduling Table Generation
-Input : grid Θ = {0, 0.5, 1, ..., 35} (degrees)
-Output: T (lookup table, |T| = 5041)
+Input : Θ = {0, 0.5, 1.0, ..., 35.0} degrees
+Output: T, a lookup table with 71 × 71 entries
 
- 1  T ← { }                                    # empty dictionary
- 2  for θ1_deg in Θ do
- 3      for θ3_deg in Θ do
+ 1  T ← empty dictionary
+
+ 2  for θ1_deg ∈ Θ do
+ 3      for θ3_deg ∈ Θ do
  4          θ1_rad ← θ1_deg · π/180
  5          θ3_rad ← θ3_deg · π/180
+
  6          l_cg, Δβ, J_cg, G_pR, G_pL ← ComputeCoM(θ1_rad, θ3_rad)
- 7          K1 ← LQR(θ1_rad, θ3_rad)            # Algorithm 4
- 8          K2 ← BodyLQR()                      # same, with A_h, B_h, Q2, R2
- 9          J_foot^R ← ∂G_pR / ∂α5              # analytical Jacobian
+
+ 7          K1 ← WheelLQR(θ1_rad, θ3_rad)
+ 8          K2 ← BodyLevelingLQR()
+
+ 9          J_foot^R ← ∂G_pR / ∂α5
 10          J_foot^L ← ∂G_pL / ∂α5
-11          T[(θ1_deg, θ3_deg)] ← { K1, K2, Δβ, G_pR, G_pL, J_foot^R, J_foot^L }
-12  return T
+
+11          T[(θ1_deg, θ3_deg)] ← {
+                K1, K2, Δβ, G_pR, G_pL, J_foot^R, J_foot^L, l_cg, J_cg
+            }
+12      end for
+13  end for
+
+14  save T to disk
+15  return T
 ```
 
 ---
@@ -694,7 +795,7 @@ The body-leveling LQR (Section 6) outputs desired vertical forces $(F_{bl}, F_{b
 
 ### 8.2 Step 1 — Rotate the force into the leg frame
 
-The body-leveling forces act vertically in the world frame. The leg is tilted by $\Delta\beta$ relative to the world vertical, so we rotate by $\Delta\beta$ in the $x$–$y$ plane:
+The body-leveling forces act vertically in the world frame. The leg is tilted by $\Delta\beta$ relative to the world vertical, so we rotate by $\Delta\beta$ in the $x$–$y$ plane using the inverse planar rotation matrix:
 
 $$
 \begin{bmatrix}
@@ -702,7 +803,7 @@ F_{x\bullet}\\
 F_{y\bullet}
 \end{bmatrix}
 =
-\mathrm{rotz}(\Delta\beta)^{-1}
+R_z^{-1}(\Delta\beta)
 \begin{bmatrix}
 0\\
 F_{b\bullet}
@@ -710,7 +811,7 @@ F_{b\bullet}
 \qquad \bullet\in\{l,r\}.
 $$
 
-where $\operatorname{rotz}(\Delta\beta)^{-1} = \begin{bmatrix}\cos\Delta\beta & \sin\Delta\beta \\ -\sin\Delta\beta & \cos\Delta\beta\end{bmatrix}$ is the inverse (transpose) of the elementary $z$-axis rotation.
+where $R_z^{-1}(\Delta\beta) = \begin{bmatrix}\cos\Delta\beta & \sin\Delta\beta \\ -\sin\Delta\beta & \cos\Delta\beta\end{bmatrix}$ is the inverse, equivalently transpose, of the elementary $z$-axis rotation.
 
 ### 8.3 Step 2 — Project through the foot Jacobian transpose
 
@@ -731,18 +832,18 @@ $$
 All motor commands are software-clamped to $[-8,\, 8]$ N·m to respect the actuator hardware limits.
 
 ```text
-Algorithm 6: Force-to-Torque Mapping (Single Leg)
-Input : F_b• (body-leveling force), Δβ, J_foot (foot Jacobian)
-Output: τ• (hip torque, N·m)
+Algorithm 6: Force-to-Torque Mapping for One Leg
+Input : F_b•, Δβ, J_foot
+Output: τ•
 
- 1  // 1. Resolve into leg frame:
- 2  F_x ←  F_b• · sin Δβ
- 3  F_y ←  F_b• · cos Δβ
- 4  // 2. Project through Jacobian transpose:
- 5  τ ← J_foot[0]·F_x + J_foot[1]·F_y
- 6  // 3. Clamp to hardware limits:
- 7  τ ← clamp(τ, −8.0, 8.0)
- 8  return τ
+ 1  F_x ← F_b• · sin(Δβ)
+ 2  F_y ← F_b• · cos(Δβ)
+
+ 3  τ• ← J_foot[0]·F_x + J_foot[1]·F_y
+
+ 4  τ• ← clamp(τ•, −8.0, 8.0)
+
+ 5  return τ•
 ```
 
 ---
@@ -821,50 +922,73 @@ The main loop is governed by a simple state variable `start_num`:
 
 ```text
 Algorithm 7: On-Board Runtime Main Loop
-Input : T1 (wheel LUT, 5041 entries), T2 (body LUT, 5041 entries)
+Input : T, precomputed lookup table
+Output: motor torque commands at 400 Hz
 
- 1  // Initialise
- 2  ẋ_d, δ̇_d, y_d, γ_d, addv ← 0;   start_num ← 0
- 3  load T1, T2 from disk
- 4  start IMU, CAN, and UART reader threads
+ 1  x_d, x_dot_d, δ_d, δ_dot_d, y_d, γ_d, addv ← 0
+ 2  start_num ← 0
+
+ 3  load lookup table T from disk
+ 4  start IMU, CAN, and remote-control reader threads
+
  5  while true do
- 6      // Read sensors (protected by mutexes):
- 7      θ, θ̇, γ, γ̇, δ, δ̇ ← IMU
- 8      θ1, θ3 ← hip crank angles
- 9      ω_R, ω_L ← wheel speeds via encoders
-10      parsed ← most recent remote input
-11      if parsed.type = button then
-12          execute button action
-13      else if parsed.type = joystick then
-14          ẋ_d, δ̇_d, y_d, γ_d ← map joystick axes        # Section 9
-15          x_d ← x_d + ẋ_d·Δt;   δ_d ← δ_d + δ̇_d·Δt
-16      if start_num = 1 then                              # transition
-17          switch wheels to torque mode;   start_num ← 3
-18      else if start_num = 3 then                         # active LQR
-19          // Snap to grid and fetch gains:
-20          θ̃1 ← round(|θ1|·2) / 2
-21          θ̃3 ← round(|θ3|·2) / 2
-22          K1, K2, Δβ, G_pR, G_pL, J_foot^R, J_foot^L ← T[(θ̃1, θ̃3)]
-23          // Wheel LQR:
-24          Z   ← ( x_d, (ω_R + ω_L)·r/2, θ, θ̇, δ, δ̇ )ᵀ
-25          Z_d ← ( x_d, ẋ_d, −Δβ, 0, δ_d, δ̇_d )ᵀ
-26          (τ_L, τ_R)ᵀ ← −K1·(Z − Z_d)
-27          τ_L, τ_R ← clamp(τ_L,R, −8, 8)
-28          // Body-leveling LQR:
-29          y  ← −(G_pR_y + G_pL_y) / 2                    # height from foot positions
-30          ẏ  ← −(v_R_y + v_L_y) / 2                      # vertical velocity
-31          Q   ← ( y, ẏ, γ, γ̇ )ᵀ
-32          Q_d ← ( y_d, 0, γ_d, 0 )ᵀ
-33          (F_bl, F_br)ᵀ ← −K2·(Q − Q_d) + ( m_b·g/2, m_b·g/2 )ᵀ
-34          // Map forces to hip torques:
-35          τ_l ← ForceToTorque(F_bl, Δβ, J_foot^L)        # Algorithm 6
-36          τ_r ← ForceToTorque(F_br, Δβ, J_foot^R)        # Algorithm 6
-37          // Dispatch via CAN:
-38          Motor 1 (right hip)   ← −τ_r;   Motor 3 (left hip)   ← +τ_l
-39          Motor 2 (right wheel) ← −τ_R;   Motor 4 (left wheel) ← +τ_L
-40      else
-41          idle: zero torque or position hold
-42      log state at 100 Hz (every 4th iteration)
+ 6      θ, θ_dot, γ, γ_dot, δ, δ_dot ← latest IMU data
+ 7      θ1, θ3 ← latest hip crank angles
+ 8      ω_R, ω_L ← latest wheel angular speeds
+ 9      remote ← latest remote-control input
+
+10      if remote is button command then
+11          execute corresponding button action
+12      else if remote is joystick command then
+13          x_dot_d, δ_dot_d, y_d, γ_d ← MapJoystick(remote, addv)
+14          x_d ← x_d + x_dot_d·Δt
+15          δ_d ← δ_d + δ_dot_d·Δt
+16      end if
+
+17      if start_num = 1 then
+18          switch wheel motors to torque-control mode
+19          start_num ← 3
+20      end if
+
+21      if start_num = 3 then
+22          θ1_grid ← round(|θ1|·2) / 2
+23          θ3_grid ← round(|θ3|·2) / 2
+
+24          K1, K2, Δβ, G_pR, G_pL, J_foot^R, J_foot^L ← T[(θ1_grid, θ3_grid)]
+
+25          x_dot ← (ω_R + ω_L)·r/2
+26          x ← update or estimate from wheel odometry
+
+27          Z   ← (x, x_dot, θ, θ_dot, δ, δ_dot)ᵀ
+28          Z_d ← (x_d, x_dot_d, −Δβ, 0, δ_d, δ_dot_d)ᵀ
+
+29          (τ_L, τ_R)ᵀ ← −K1·(Z − Z_d)
+30          τ_L ← clamp(τ_L, −8.0, 8.0)
+31          τ_R ← clamp(τ_R, −8.0, 8.0)
+
+32          y ← −(G_pR,y + G_pL,y)/2
+33          y_dot ← estimate from vertical foot velocity
+
+34          Q   ← (y, y_dot, γ, γ_dot)ᵀ
+35          Q_d ← (y_d, 0, γ_d, 0)ᵀ
+
+36          (F_bl, F_br)ᵀ ← −K2·(Q − Q_d) + (m_b·g/2, m_b·g/2)ᵀ
+
+37          τ_l ← ForceToTorque(F_bl, Δβ, J_foot^L)
+38          τ_r ← ForceToTorque(F_br, Δβ, J_foot^R)
+
+39          Motor 1, right hip   ← −τ_r
+40          Motor 3, left hip    ← +τ_l
+41          Motor 2, right wheel ← −τ_R
+42          Motor 4, left wheel  ← +τ_L
+
+43      else
+44          send zero torque or position-hold command
+45      end if
+
+46      log state every 4 control cycles
+47      wait until next 400 Hz control tick
+48  end while
 ```
 
 > **Note.** Motor sign conventions: on the prototype, the right-hip and right-wheel motors (IDs 1 and 2) are mounted with opposite orientation to the left side (IDs 3 and 4), so the software applies sign reversals when dispatching torques to match the common "positive forward" convention used in the derivation. These signs are set at the CAN layer and are not part of the algorithmic logic.
