@@ -380,7 +380,7 @@ $$
 J_{cg} = \sum_{i} J_i^{\text{(local)}} + \sum_i m_i\,\bigl\|p_{m_i}^{0} - p_R^{0}\bigr\|^{2},
 $$
 
-where the sum runs over both legs and the body. The offset angle $\Delta\beta$ is used as the pitch reference (with a minus sign) so that the equilibrium places the CoM directly above the contact line. Using $\operatorname{atan2}$ rather than $\arctan$ preserves correctness when $\Delta p_y \to 0$ on tilted ground.
+where the sum runs over both legs and the body. The offset angle $\Delta\beta$ is used as the pitch reference (with a minus sign) so that the equilibrium places the CoM directly above the contact line. Using $\mathrm{atan2}$ rather than $\arctan$ preserves correctness when $\Delta p_y \to 0$ on tilted ground.
 
 ### 4.5 Pseudocode
 
