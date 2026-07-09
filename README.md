@@ -148,7 +148,9 @@ Each evaluation of $g_x^{(i)}(l_j \pm \delta)$ requires one call to the forward 
 The update rule is projected gradient descent:
 
 $$
-l_j \leftarrow \operatorname{Proj}_{[l_j^{\min},\, l_j^{\max}]}\!\Bigl(l_j - \eta\,\frac{\partial J}{\partial l_j}\Bigr), \quad j=1,\dots,5.
+l_j \leftarrow \mathrm{Proj}_{[l_j^{\min},\, l_j^{\max}]}
+\left(l_j-\eta\,\frac{\partial J}{\partial l_j}\right),
+\quad j=1,\ldots,5.
 $$
 
 The learning rate $\eta$ is adapted by a simplified Armijo backtracking line search:
@@ -371,7 +373,7 @@ $$
 Three quantities are passed to the controller:
 
 1. **Effective pendulum length:** $l_{cg} = \|p_R^{0} - p_G^{0}\|$.
-2. **CoM offset angle:** $\Delta\beta = \operatorname{atan2}(\Delta p_x,\, \Delta p_y)$, where $\Delta p = p_R^{0} - p_G^{0}$.
+2. **CoM offset angle:** $\Delta\beta = \mathrm{atan2}(\Delta p_x,\, \Delta p_y)$, where $\Delta p = p_R^{0} - p_G^{0}$.
 3. **Moment of inertia about the CoM** via the parallel-axis theorem:
 
 $$
@@ -579,7 +581,9 @@ $$
 - Control effort is penalised symmetrically on the two wheels ($R_1 = \operatorname{diag}(1.5,\, 1.5)$).
 
 $$
-Q_1 = \operatorname{diag}(10,\; 1,\; 300,\; 15,\; 2,\; 1), \qquad R_1 = \operatorname{diag}(1.5,\; 1.5).
+Q_1 = \mathrm{diag}(10,\; 1,\; 300,\; 15,\; 2,\; 1), 
+\qquad 
+R_1 = \mathrm{diag}(1.5,\; 1.5).
 $$
 
 ### 6.3 Body-leveling LQR
@@ -593,7 +597,9 @@ $$
 where $Q_d = (y_d, 0, \gamma_d, 0)^{\top}$, with $y_d$ the commanded body height and $\gamma_d$ the desired roll (zero for self-levelling, or equal to the measured ground slope for adaptation). The prototype uses
 
 $$
-Q_2 = \operatorname{diag}(50000,\; 500,\; 5000,\; 100), \qquad R_2 = I_2.
+Q_2 = \mathrm{diag}(50000,\; 500,\; 5000,\; 100), 
+\qquad 
+R_2 = I_2.
 $$
 
 The height error receives the highest penalty ($q_{11} = 5\times10^{4}$), followed by roll error ($q_{33} = 5000$).
@@ -654,7 +660,7 @@ The grid is serialised to disk for loading at boot time.
 At runtime, the measured hip crank angles $(\theta_1, \theta_3)$ are snapped to the nearest $0.5^\circ$ grid point:
 
 $$
-\tilde{\theta} = \operatorname{round}(\theta \times 2)\,/\,2.
+\tilde{\theta} = \mathrm{round}(\theta \times 2)\,/\,2.
 $$
 
 This replaces an on-line Riccati solve (tens of milliseconds on an embedded processor) with a dictionary lookup (nanoseconds).
@@ -691,7 +697,17 @@ The body-leveling LQR (Section 6) outputs desired vertical forces $(F_{bl}, F_{b
 The body-leveling forces act vertically in the world frame. The leg is tilted by $\Delta\beta$ relative to the world vertical, so we rotate by $\Delta\beta$ in the $x$–$y$ plane:
 
 $$
-\begin{bmatrix}F_{x\bullet}\\F_{y\bullet}\end{bmatrix} = \operatorname{rotz}(\Delta\beta)^{-1}\begin{bmatrix}0\\F_{b\bullet}\end{bmatrix}, \qquad \bullet\in\{l,r\},
+\begin{bmatrix}
+F_{x\bullet}\\
+F_{y\bullet}
+\end{bmatrix}
+=
+\mathrm{rotz}(\Delta\beta)^{-1}
+\begin{bmatrix}
+0\\
+F_{b\bullet}
+\end{bmatrix},
+\qquad \bullet\in\{l,r\}.
 $$
 
 where $\operatorname{rotz}(\Delta\beta)^{-1} = \begin{bmatrix}\cos\Delta\beta & \sin\Delta\beta \\ -\sin\Delta\beta & \cos\Delta\beta\end{bmatrix}$ is the inverse (transpose) of the elementary $z$-axis rotation.
@@ -915,9 +931,9 @@ Complete parameter set used in all algorithms (prototype values).
 
 | Symbol | Value |
 |---|---|
-| $Q_1$ | $\operatorname{diag}(10, 1, 300, 15, 2, 1)$ |
-| $R_1$ | $\operatorname{diag}(1.5,\, 1.5)$ |
-| $Q_2$ | $\operatorname{diag}(50000, 500, 5000, 100)$ |
+| $Q_1$ | $\mathrm{diag}(10, 1, 300, 15, 2, 1)$ |
+| $R_1$ | $\mathrm{diag}(1.5,\, 1.5)$ |
+| $Q_2$ | $\mathrm{diag}(50000, 500, 5000, 100)$ |
 | $R_2$ | $I_2$ |
 
 **Hardware limits & rates**
